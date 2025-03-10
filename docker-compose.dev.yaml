@@ -1,0 +1,18 @@
+version: "3.7"
+services:
+  dev:
+    container_name: fastapi-interview
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: tail -f /dev/null
+    volumes:
+      - type: bind
+        source: .
+        target: /srv
+        consistency: cached
+    env_file:
+      - .env
+    restart: always
+    ports:
+      - 8081:8081

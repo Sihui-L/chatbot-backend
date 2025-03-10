@@ -1,0 +1,10 @@
+# Include dependencies for production
+-r prod.in
+
+# Dependencies that are only required in dev e.g. packages used for testing
+pytest
+coverage
+pre-commit
+pip-tools
+pytest-asyncio
+httpx
