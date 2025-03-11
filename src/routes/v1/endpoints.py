@@ -1,10 +1,11 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 import json
 import time
 import asyncio
 import os
-from typing import List, Dict
+import base64
+from typing import List, Dict, Union
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -44,7 +45,7 @@ client = AsyncOpenAI(api_key=openai_api_key)
 # Models
 class Message(BaseModel):
     role: str
-    content: str
+    content: Union[str, List[Dict]]  # Can be a string or a list of content parts
 
 class ChatSession(BaseModel):
     id: str
@@ -69,11 +70,33 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             # Handle different message types
             if message_data.get("type") == "message":
                 user_message = message_data.get("content", "")
+                image_data = message_data.get("image")
 
-                # Add user message to session history
-                chat_sessions[client_id].messages.append(
-                    Message(role="user", content=user_message)
-                )
+                # Create message content based on whether an image is included
+                if image_data:
+                    # For messages with images, we create a list of content parts
+                    message_content = [
+                        {"type": "text", "text": user_message}
+                    ]
+                    
+                    # Add the image as a content part
+                    message_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_data,
+                            "detail": "high"  # Use high detail for better analysis
+                        }
+                    })
+                    
+                    # Add user message with image to session history
+                    chat_sessions[client_id].messages.append(
+                        Message(role="user", content=message_content)
+                    )
+                else:
+                    # Regular text message
+                    chat_sessions[client_id].messages.append(
+                        Message(role="user", content=user_message)
+                    )
 
                 # Start response time measurement
                 start_time = time.time()
@@ -82,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     # For non-streaming response
                     if not message_data.get("stream", False):
                         # Call OpenAI API
-                        response = await get_ai_response(chat_sessions[client_id].messages)
+                        response = await get_ai_response(chat_sessions[client_id].messages, image_data is not None)
 
                         # Calculate response time
                         response_time = time.time() - start_time
@@ -100,6 +123,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                                 "response_time": response_time,
                                 "length": len(response),
                                 "sentiment": estimate_sentiment(response),
+                                "contains_image_analysis": image_data is not None,
                             },
                         }
                         await manager.send_message(json.dumps(response_data), client_id)
@@ -109,7 +133,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         # Create a variable to accumulate the complete response
                         complete_response = ""
                         
-                        async for chunk in stream_ai_response(chat_sessions[client_id].messages):
+                        async for chunk in stream_ai_response(chat_sessions[client_id].messages, image_data is not None):
                             chunk_data = {
                                 "type": "stream",
                                 "content": chunk,
@@ -130,6 +154,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                                 "response_time": response_time,
                                 "length": len(complete_response),
                                 "sentiment": estimate_sentiment(complete_response),
+                                "contains_image_analysis": image_data is not None,
                             },
                         }
                         await manager.send_message(json.dumps(complete_data), client_id)
@@ -163,14 +188,25 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         manager.disconnect(client_id)
 
 
-async def get_ai_response(messages: List[Message]):
+async def get_ai_response(messages: List[Message], has_image: bool = False):
     """Get a response from OpenAI API (non-streaming)"""
     try:
         # Convert our messages to the format OpenAI expects
-        openai_messages = [{"role": m.role, "content": m.content} for m in messages]
+        openai_messages = []
+        
+        for m in messages:
+            # For text messages
+            if isinstance(m.content, str):
+                openai_messages.append({"role": m.role, "content": m.content})
+            # For messages with image content
+            elif isinstance(m.content, list):
+                openai_messages.append({"role": m.role, "content": m.content})
+
+        # For image analysis, use GPT-4o which supports vision capabilities
+        model = "gpt-4o"
 
         response = await client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=openai_messages,
             max_tokens=1000,
         )
@@ -180,28 +216,53 @@ async def get_ai_response(messages: List[Message]):
         print(f"Error calling OpenAI API: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error calling AI service: {str(e)}")
 
-
-async def stream_ai_response(messages: List[Message]):
+async def stream_ai_response(messages: List[Message], has_image: bool = False):
     """Stream a response from OpenAI API"""
     try:
         # Convert our messages to the format OpenAI expects
-        openai_messages = [{"role": m.role, "content": m.content} for m in messages]
+        openai_messages = []
+        
+        for m in messages:
+            # For text messages
+            if isinstance(m.content, str):
+                openai_messages.append({"role": m.role, "content": m.content})
+            # For messages with image content
+            elif isinstance(m.content, list):
+                openai_messages.append({"role": m.role, "content": m.content})
 
-        stream = await client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=openai_messages,
-            stream=True,
-            max_tokens=1000,
-        )
+        # For image analysis, use GPT-4o which supports vision capabilities
+        model = "gpt-4o"
+        
+        # If using vision model and it doesn't support streaming, fall back to non-streaming
+        if has_image:
+            # Vision model may not support streaming, so we'll simulate it
+            response = await client.chat.completions.create(
+                model=model,
+                messages=openai_messages,
+                max_tokens=1000,
+            )
+            
+            full_response = response.choices[0].message.content
+            # Simulate streaming by yielding chunks of the response
+            chunk_size = 10
+            for i in range(0, len(full_response), chunk_size):
+                yield full_response[i:i+chunk_size]
+                await asyncio.sleep(0.05)  # Add a small delay to simulate streaming
+        else:
+            stream = await client.chat.completions.create(
+                model=model,
+                messages=openai_messages,
+                stream=True,
+                max_tokens=1000,
+            )
 
-        # 'stream' is an async generator
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+            # 'stream' is an async generator
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
     except Exception as e:
         print(f"Error streaming from OpenAI API: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error streaming from AI service: {str(e)}")
-
 
 def estimate_sentiment(text: str) -> str:
     """
