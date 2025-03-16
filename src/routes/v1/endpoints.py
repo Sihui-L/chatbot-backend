@@ -8,6 +8,7 @@ import base64
 from typing import List, Dict, Union
 from openai import AsyncOpenAI
 from pydantic import BaseModel
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 router = APIRouter()
 
@@ -42,10 +43,25 @@ if not openai_api_key:
 # Initialize the OpenAI client
 client = AsyncOpenAI(api_key=openai_api_key)
 
+# Initialize VADER sentiment analyzer
+try:
+    # Try to initialize VADER
+    sentiment_analyzer = SentimentIntensityAnalyzer()
+except:
+    # If VADER isn't installed or NLTK data isn't downloaded, try to download
+    import nltk
+    try:
+        nltk.download('vader_lexicon')
+        sentiment_analyzer = SentimentIntensityAnalyzer()
+    except Exception as e:
+        print(f"Warning: Could not initialize VADER sentiment analyzer: {e}")
+        # Fallback to simple sentiment analysis
+        sentiment_analyzer = None
+
 # Models
 class Message(BaseModel):
     role: str
-    content: Union[str, List[Dict]]  # Can be a string or a list of content parts
+    content: Union[str, List[Dict]]
 
 class ChatSession(BaseModel):
     id: str
@@ -84,7 +100,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "type": "image_url",
                         "image_url": {
                             "url": image_data,
-                            "detail": "high"  # Use high detail for better analysis
+                            "detail": "high"
                         }
                     })
                     
@@ -122,7 +138,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                             "metadata": {
                                 "response_time": response_time,
                                 "length": len(response),
-                                "sentiment": estimate_sentiment(response),
+                                "sentiment": analyze_sentiment(response),
                                 "contains_image_analysis": image_data is not None,
                             },
                         }
@@ -153,7 +169,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                             "metadata": {
                                 "response_time": response_time,
                                 "length": len(complete_response),
-                                "sentiment": estimate_sentiment(complete_response),
+                                "sentiment": analyze_sentiment(complete_response),
                                 "contains_image_analysis": image_data is not None,
                             },
                         }
@@ -169,13 +185,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 
             # Handle feedback messages
             elif message_data.get("type") == "feedback":
-                # Store feedback (in a real app, you might want to save this to a database)
+                # Store feedback (in a real app, save this to a database)
                 feedback_data = {
                     "session_id": client_id,
                     "message_id": message_data.get("message_id"),
                     "rating": message_data.get("rating"),
                 }
-                # In a real implementation, you would save this feedback
+                # In a real implementation, save this feedback
                 print(f"Received feedback: {feedback_data}")
 
                 # Acknowledge feedback receipt
@@ -191,7 +207,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
 async def get_ai_response(messages: List[Message], has_image: bool = False):
     """Get a response from OpenAI API (non-streaming)"""
     try:
-        # Convert our messages to the format OpenAI expects
+        # Convert messages to the format OpenAI expects
         openai_messages = []
         
         for m in messages:
@@ -264,7 +280,33 @@ async def stream_ai_response(messages: List[Message], has_image: bool = False):
         print(f"Error streaming from OpenAI API: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error streaming from AI service: {str(e)}")
 
-def estimate_sentiment(text: str) -> str:
+def analyze_sentiment(text: str) -> str:
+    """
+    Analyze sentiment using VADER sentiment analysis tool.
+    Returns "positive", "negative", or "neutral" based on the compound score.
+    
+    If VADER is not available, falls back to the simple keyword-based method.
+    """
+    # Check if VADER sentiment analyzer is available
+    if sentiment_analyzer is not None:
+        # Get sentiment scores
+        scores = sentiment_analyzer.polarity_scores(text)
+        
+        # VADER compound score: Ranges from -1 (negative) to 1 (positive)
+        compound = scores['compound']
+        
+        # Classify sentiment based on compound score
+        if compound >= 0.05:
+            return "positive"
+        elif compound <= -0.05:
+            return "negative"
+        else:
+            return "neutral"
+    else:
+        # Fallback to simple keyword-based method
+        return simple_sentiment_analysis(text)
+
+def simple_sentiment_analysis(text: str) -> str:
     """
     Simple estimation of sentiment based on keywords.
     """
