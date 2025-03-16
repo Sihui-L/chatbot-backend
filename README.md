@@ -1,79 +1,102 @@
-# fastapi-template
+# ChatApp Backend
 
-A template project for building applications using FastAPI with Docker. This setup provides a streamlined development environment and easy dependency management.
+## Overview
 
+This backend implementation powers a real-time chat application with AI capabilities, featuring WebSocket communication, OpenAI integration, and image analysis functionality. Users can engage in conversations with an AI assistant, upload images for analysis, and receive visualized metrics on AI responses.
 
-## Quickstart
-1. **Build Docker image**: Run `make build` to create the Docker images for the FastAPI application and any supplementary services.
-2. **Compile dependencies**: Run `make deps` to generate `requirements.txt` and `requirements.dev.txt` using piptools.
-3. **Set up .env**: Create .env file
-3. **Start containers and enter bash session**: Run `make start` to start the service containers and open an interactive bash shell in the main application container.
-4. **Run app**: Run `make app` inside the container.
+## Features
 
-## Building the Service Containers
-Running `make build` executes `docker-compose -f docker-compose.dev.yaml build`. This command builds a Docker image from `Dockerfile` for the FastAPI application and Docker images for other necessary services as specified in `docker-compose.dev.yaml`. The Dockerfile includes steps to:
-- Create a user named `convergence_user`
-- Install Python dependencies
-- Update and install system packages
-- Expose port 8081
-- Start the FastAPI application on port 8081
+- WebSocket-based real-time communication
+- OpenAI GPT integration with streaming responses
+- Image upload and analysis using GPT-4o vision capabilities
+- Multiple concurrent chat sessions
+- Response metrics (time, length, sentiment)
+- User feedback collection (thumbs up/down)
 
-## Compiling Dependencies
-`piptools` helps manage dependencies by creating a `requirements.txt` file with all necessary packages and their compatible versions. Running `make deps` inside the container generates:
-- `requirements.txt`: Contains packages required for running the application in production.
-- `requirements.dev.txt`: Includes all packages from `requirements.txt` plus additional packages needed for development (e.g., testing tools).
+## Architecture
 
-## Starting the Service
-Running `make start` executes the following commands:
-- `docker-compose -f docker-compose.dev.yaml up -d`: Starts all the service containers in detached mode.
-- `docker exec -it browser_agent bash`: Opens an interactive bash shell inside the `browser_agent` container for direct interaction.
+The application follows a clean, modular architecture built with FastAPI:
 
-This setup allows you to run and interact with the application in a development environment.
+- **Connection Manager**: Handles WebSocket connections, messaging, and disconnections
+- **Data Models**: Structured representation of messages and chat sessions
+- **OpenAI Integration**: Processes user inputs and generates AI responses
+- **HTTP Endpoints**: Provides additional session management functionality
 
+## Technical Implementation
 
-## Running tests
-Our testing strategy prioritises integration tests to ensure robust API interactions, while maintaining the ability to run some unit tests if required. To run tests, use the `make tests` command inside the Docker container. This loads the environment from `tests/test.env`, executes tests in both `tests/unit` and `tests/integration` directories, and generates a coverage report. New tests can be added to the appropriate directory under `tests/`.
+### WebSocket Communication
 
-## Adding Resources
-Resources in this project are managed using a custom utility system. Here's how it works:
+WebSockets enable persistent, real-time communication between the frontend and backend. The implementation includes:
 
-Define resources by inheriting from `src.utils.util_manager.Util`:
-```python
-from abc import ABC, abstractmethod
+- Client identification with unique IDs
+- Structured JSON message protocol
+- Error handling and reconnection management
+- Support for both text messages and binary data
 
-class Util(ABC):
-    @abstractmethod
-    async def init(self):
-        # Initialise and return the resource
-        ...
+### OpenAI Integration
 
-    @abstractmethod
-    async def cleanup(self, resource):
-        # Clean up the resource (returned by self.init())
-        ...
-```
+The application integrates with OpenAI's Chat Completions API to:
 
-Resources are initalised at application startup and cleaned up at shutdown using FastAPI's [lifespan events](https://fastapi.tiangolo.com/advanced/events/).
-Add resources to the UtilManager for type hinting and easy access:
+- Generate contextual responses based on conversation history
+- Stream responses for a more natural experience
+- Process and analyze images using GPT-4o
 
-```python
-class Resources(UtilManager):
-    @property
-    def database(self) -> sqlite3.Connection:
-        return self.initialised_resources.get(SQLite)
+### Session Management
 
-resources = Resources([SQLite])
-```
+Chat sessions are maintained with:
 
-Use resources in your application:
+- In-memory storage of conversation history
+- Support for multiple concurrent sessions
+- Simple retrieval and deletion via HTTP endpoints
 
-```python
-from src.utils.utils import resources
+## Design Considerations & Challenges
 
-resources.database.cursor()
-```
-This system allows for organised resource management and provides auto-completion via type hints throughout the application.
+### Message Protocol Design
 
+Implemented a type-based message protocol for clear separation of concerns:
 
-## Local Development
-Docker Compose binds the volume of the container to the local volume. This setup allows you to make changes to the source code on your local machine, which are automatically reflected in the container without needing to rebuild it. Rebuilding the container is only necessary when adding or updating dependencies. Adding environment variables to `.env` requires restarting the container.
+- `message`: User/AI text or image messages
+- `stream`: Incremental response chunks
+- `feedback`: User ratings on AI responses
+
+### Streaming Implementation
+
+Vision models don't natively support streaming, so I implemented a chunking mechanism that simulates streaming for image-based conversations, providing a consistent experience regardless of message type.
+
+### Image Processing Challenges
+
+Ensuring proper formatting of image data for OpenAI's vision models required careful implementation of:
+
+- Correct content structure for multimodal messages
+- Proper image URL formatting
+- Detailed error handling for image processing failures
+
+## Getting Started
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Python 3.9+
+- OpenAI API key
+
+### Setup & Running
+
+1. Set up environment variables in `.env` file (copy from `.env.example`)
+2. Build the Docker container: `make build`
+3. Start the container: `make start`
+4. Run the application: `make app`
+
+### API Endpoints
+
+- WebSocket: `ws://localhost:8081/ws/{client_id}`
+- GET sessions: `GET /sessions/{client_id}`
+- Delete session: `DELETE /sessions/{client_id}`
+
+## Future Improvements
+
+While this implementation meets all requirements, potential enhancements include:
+
+1. Persistent storage with a database
+2. Authentication and user management
+3. Enhanced sentiment analysis
+4. Performance optimizations for large conversations
