@@ -2,11 +2,11 @@ FROM python:3.9.13-slim-buster
 
 USER root
 
-# Create non root user convergence_user
+# Create non root user test_user
 RUN adduser --quiet --disabled-password \
-    --home /home/convergence_user \
-    --shell /bin/bash convergence_user
-RUN adduser convergence_user sudo
+    --home /home/test_user \
+    --shell /bin/bash test_user
+RUN adduser test_user sudo
 
 # Set working directory.
 WORKDIR /srv
@@ -33,14 +33,14 @@ RUN apt-get update && apt-get install make
 COPY . /srv
 
 # Ensure NLTK data is accessible to the non-root user
-RUN mkdir -p /home/convergence_user/nltk_data
-RUN cp -r /root/nltk_data/sentiment /home/convergence_user/nltk_data/
-RUN chown -R convergence_user:convergence_user /home/convergence_user/nltk_data
+RUN mkdir -p /home/test_user/nltk_data
+RUN cp -r /root/nltk_data/sentiment /home/test_user/nltk_data/
+RUN chown -R test_user:test_user /home/test_user/nltk_data
 
-USER convergence_user
+USER test_user
 
 # Set NLTK_DATA environment variable for the non-root user
-ENV NLTK_DATA="/home/convergence_user/nltk_data"
+ENV NLTK_DATA="/home/test_user/nltk_data"
 
 EXPOSE 8081
 

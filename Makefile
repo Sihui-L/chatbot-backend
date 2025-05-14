@@ -1,5 +1,5 @@
 # MAKEFILE
-CONTAINER_NAME?=fastapi-interview
+CONTAINER_NAME?=fastapi-test
 
 # The .PHONY rule is used to declare that 'test' and 'tests' are not files but rather commands.
 # This prevents Make from checking for the existence of a file named 'test' or 'tests' and
